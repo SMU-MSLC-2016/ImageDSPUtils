@@ -447,7 +447,24 @@ class VideoAnalgesic: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AV
         return isOn
     }
     
-    
+    func setFPS(){
+        if let device = self.videoDevice{
+            if (device.hasTorch && self.devicePosition == AVCaptureDevicePosition.Back) {
+                do {
+                    try device.lockForConfiguration()
+                } catch _ {
+                }
+                
+                // set to 120FPS
+                device.activeVideoMaxFrameDuration = CMTimeMake(10, 600)
+                device.activeVideoMinFrameDuration = CMTimeMake(10, 600)
+                device.unlockForConfiguration()
+            }
+        }
+
+    }
+
+
     func turnOnFlashwithLevel(level:Float) -> (Bool){
         var isOverHeating = false
         if let device = self.videoDevice{

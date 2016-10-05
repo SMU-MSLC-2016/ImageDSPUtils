@@ -6,11 +6,8 @@
 //  Copyright (c) 2015 Eric Larson. All rights reserved.
 //
 
-#import "OpenCVBridge.h"
+#import "OpenCVBridge.hh"
 
-#import "AVFoundation/AVFoundation.h"
-#import <opencv2/opencv.hpp>
-#import <opencv2/highgui/cap_ios.h>
 
 using namespace cv;
 

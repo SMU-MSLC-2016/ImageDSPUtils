@@ -453,20 +453,29 @@ class VideoAnalgesic: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AV
         return isOn
     }
     
-    func setFPS(){
+    func setFPS(desiredFrameRate:Double){
         if let device = self.videoDevice{
-            if (self.devicePosition == AVCaptureDevicePosition.back) {
-                do {
-                    try device.lockForConfiguration()
-                } catch _ {
-                }
-                
-                // set to 120FPS
-                device.activeVideoMaxFrameDuration = CMTimeMake(10, 600)
-                device.activeVideoMinFrameDuration = CMTimeMake(10, 600)
-                device.unlockForConfiguration()
+            do {
+                try device.lockForConfiguration()
+            } catch _ {
             }
+            
+            // set to 120FPS
+            let format = device.activeFormat!
+            let time:CMTime = CMTimeMake(1, Int32(desiredFrameRate))
+            
+            for range in format.videoSupportedFrameRateRanges as! [AVFrameRateRange]{
+                if range.minFrameRate <= (desiredFrameRate + 0.0001) && range.maxFrameRate >= (desiredFrameRate - 0.0001) {
+                    device.activeVideoMaxFrameDuration = time
+                    device.activeVideoMinFrameDuration = time
+                    print("Changed FPS to \(desiredFrameRate)")
+                    break
+                }
+
+            }
+            device.unlockForConfiguration()
         }
+        
 
     }
 

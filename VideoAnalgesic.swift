@@ -12,33 +12,33 @@ import AVFoundation
 import CoreImage
 
 
-typealias ProcessBlock = ( _ imageInput : CIImage ) -> (CIImage)
+typealias ProcessBlock = (_ imageInput : CIImage ) -> (CIImage)
 
 class VideoAnalgesic: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate {
     
-    fileprivate var captureSessionQueue: DispatchQueue
-    fileprivate var devicePosition: AVCaptureDevicePosition
-    fileprivate var window:UIWindow??
+    private var captureSessionQueue: DispatchQueue //dispatch_queue_t
+    private var devicePosition: AVCaptureDevice.Position
+    private var window:UIWindow??
     var videoPreviewView:GLKView
     var ciOrientation = 1
-    fileprivate var _eaglContext:EAGLContext!
-    fileprivate var ciContext:CIContext!
-    fileprivate var videoPreviewViewBounds:CGRect = CGRect.zero
-    fileprivate var processBlock:ProcessBlock? = nil
-    fileprivate var videoDevice: AVCaptureDevice? = nil
-    fileprivate var captureSession:AVCaptureSession? = nil
-    fileprivate var preset:String? = AVCaptureSessionPresetMedium
-    fileprivate var captureOrient:AVCaptureVideoOrientation? = nil
-    fileprivate var _isRunning:Bool = false
+    private var _eaglContext:EAGLContext!
+    private var ciContext:CIContext!
+    private var videoPreviewViewBounds:CGRect = CGRect.zero
+    private var processBlock:ProcessBlock? = nil
+    private var videoDevice: AVCaptureDevice? = nil
+    private var captureSession:AVCaptureSession? = nil
+    private var preset:String? = AVCaptureSession.Preset.medium.rawValue
+    private var captureOrient:AVCaptureVideoOrientation? = nil
+    private var _isRunning:Bool = false
     var transform : CGAffineTransform = CGAffineTransform.identity
-
+    
     var isRunning:Bool {
         get {
             return self._isRunning
         }
     }
     
-    // singleton method 
+    // singleton method
     class var sharedInstance: VideoAnalgesic {
         
         struct Static {
@@ -47,14 +47,14 @@ class VideoAnalgesic: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AV
         return Static.instance
     }
     
-    // for setting the filters pipeline (or whatever processing you are doing)
-    func setProcessingBlock(_ newProcessBlock:@escaping ProcessBlock)
+    // for setting the filters pipeline (r whatever processing you are doing)
+    func setProcessingBlock(newProcessBlock: @escaping ProcessBlock)
     {
         self.processBlock = newProcessBlock // to find out: does Swift do a deep copy??
     }
     
     // for setting the camera we should use
-    func setCameraPosition(_ position: AVCaptureDevicePosition){
+    func setCameraPosition(position: AVCaptureDevice.Position){
         // AVCaptureDevicePosition.Back
         // AVCaptureDevicePosition.Front
         if(position != self.devicePosition){
@@ -71,12 +71,12 @@ class VideoAnalgesic: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AV
         // AVCaptureDevicePosition.Back
         // AVCaptureDevicePosition.Front
         switch self.devicePosition{
-        case AVCaptureDevicePosition.back:
-            self.devicePosition = AVCaptureDevicePosition.front
-        case AVCaptureDevicePosition.front:
-            self.devicePosition = AVCaptureDevicePosition.back
+        case AVCaptureDevice.Position.back:
+            self.devicePosition = AVCaptureDevice.Position.front
+        case AVCaptureDevice.Position.front:
+            self.devicePosition = AVCaptureDevice.Position.back
         default:
-            self.devicePosition = AVCaptureDevicePosition.front
+            self.devicePosition = AVCaptureDevice.Position.front
         }
         
         if(self.isRunning){
@@ -141,15 +141,16 @@ class VideoAnalgesic: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AV
     
     override init() {
         
-        captureSessionQueue = DispatchQueue(label: "capture_session_queue", attributes: [])
-        devicePosition = AVCaptureDevicePosition.back
+        // create a serial queue
+        captureSessionQueue = DispatchQueue(label: "capture_session_queue")
+        devicePosition = AVCaptureDevice.Position.back
         self.window = UIApplication.shared.delegate?.window
         
-        _eaglContext = EAGLContext(api: EAGLRenderingAPI.openGLES2)
-        //        if _eaglContext==nil{
-        //            NSLog("Attempting to fall back on OpenGL 2.0")
-        //            _eaglContext = EAGLContext(API: EAGLRenderingAPI.OpenGLES2)
-        //        }
+        _eaglContext = EAGLContext(api: EAGLRenderingAPI.openGLES3)
+        if _eaglContext==nil{
+            NSLog("Attempting to fall back on OpenGL 2.0")
+            _eaglContext = EAGLContext(api: EAGLRenderingAPI.openGLES2)
+        }
         transform = CGAffineTransform.identity
         if _eaglContext != nil{
             videoPreviewView = GLKView(frame: window!!.bounds, context: _eaglContext)
@@ -157,8 +158,9 @@ class VideoAnalgesic: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AV
             
             // because the native video image from the back camera is in UIDeviceOrientationLandscapeLeft (i.e. the home button is on the right), we need to apply a clockwise 90 degree transform so that we can draw the video preview as if we were in a landscape-oriented view; if you're using the front camera and you want to have a mirrored preview (so that the user is seeing themselves in the mirror), you need to apply an additional horizontal flip (by concatenating CGAffineTransformMakeScale(-1.0, 1.0) to the rotation transform)
             
-            transform = transform.rotated(by: CGFloat(M_PI_2))
-            if devicePosition == AVCaptureDevicePosition.front{
+            transform = transform.rotated(by: CGFloat(Double.pi/2))
+            //transform = CGAffineTransformRotate(transform, CGFloat(M_PI_2))
+            if devicePosition == AVCaptureDevice.Position.front{
                 transform = transform.concatenating(CGAffineTransform(scaleX: -1.0, y: 1.0))
             }
             videoPreviewView.transform = transform
@@ -186,58 +188,64 @@ class VideoAnalgesic: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AV
             videoPreviewView = GLKView()
             videoPreviewViewBounds = CGRect.zero
         }
-
-    
+        
+        
         super.init()
         
-
+        
     }
     
-    fileprivate func start_internal()->(){
-        
-        
+    private func start_internal()->(){
         
         if (captureSession != nil){
             return; // we are already running, just return
         }
         
         NotificationCenter.default.addObserver(self,
-            selector:#selector(VideoAnalgesic.updateOrientation),
-            name:NSNotification.Name(rawValue: "UIApplicationDidChangeStatusBarOrientationNotification"),
-            object:nil)
+                                               selector:#selector(VideoAnalgesic.updateOrientation),
+                                               name:NSNotification.Name(rawValue: "UIApplicationDidChangeStatusBarOrientationNotification"),
+                                               object:nil)
         
-        captureSessionQueue.async{
-            let error:NSError? = nil;
-            
-            // get the input device and also validate the settings
-            let videoDevices = AVCaptureDeviceDiscoverySession(deviceTypes: [AVCaptureDeviceType.builtInWideAngleCamera],
-                                                               mediaType: AVMediaTypeVideo,
-                                                               position: self.devicePosition)
-            
-            
+        captureSessionQueue.async(){
+            let error:Error? = nil;
             let position = self.devicePosition;
-            
             self.videoDevice = nil;
-            for device in videoDevices!.devices {
-                if ((device as AnyObject).position == position) {
+            
+            let deviceDiscoverySession = AVCaptureDevice.DiscoverySession.init(deviceTypes: [AVCaptureDevice.DeviceType.builtInWideAngleCamera],
+                                                                               mediaType: AVMediaType.video,
+                                                                               position: AVCaptureDevice.Position.unspecified)
+            
+            for device in deviceDiscoverySession.devices {
+                if device.position == position {
                     self.videoDevice = device
                     break;
                 }
             }
             
+            
+            // get the input device and also validate the settings
+            //            let videoDevices = AVCaptureDevice.devices(for: AVMediaType.video)
+            //
+            //            for device in videoDevices {
+            //                if (device.position == position) {
+            //                    self.videoDevice = device as? AVCaptureDevice
+            //                    break;
+            //                }
+            //            }
+            
             // obtain device input
-            let videoDeviceInput: AVCaptureDeviceInput = (try! AVCaptureDeviceInput(device: self.videoDevice))
+            let videoDeviceInput: AVCaptureDeviceInput = (try! AVCaptureDeviceInput(device: self.videoDevice!))
             
             if (error != nil)
             {
-                NSLog("Unable to obtain video device input, error: \(error)");
+                NSLog("Unable to obtain video device input, error: \(String(describing: error))");
                 return;
             }
             
             
-            if (self.videoDevice?.supportsAVCaptureSessionPreset(self.preset!)==false)
+            if (self.videoDevice?.supportsSessionPreset(AVCaptureSession.Preset(rawValue: self.preset!))==false)
             {
-                NSLog("Capture session preset not supported by video device: \(self.preset)");
+                NSLog("Capture session preset not supported by video device: \(String(describing: self.preset))");
                 return;
             }
             
@@ -246,7 +254,7 @@ class VideoAnalgesic: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AV
             
             // create the capture session
             self.captureSession = AVCaptureSession()
-            self.captureSession!.sessionPreset = self.preset;
+            self.captureSession!.sessionPreset = AVCaptureSession.Preset(rawValue: self.preset!);
             
             // create and configure video data output
             let videoDataOutput = AVCaptureVideoDataOutput()
@@ -272,50 +280,50 @@ class VideoAnalgesic: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AV
                 // then start everything
                 capture.startRunning()
             }
-        
+            
             self.updateOrientation()
         }
     }
     
-    func updateOrientation(){
+    @objc func updateOrientation(){
         if !self._isRunning{
             return
         }
         
-        DispatchQueue.main.async{
+        DispatchQueue.main.async(){
             
             switch (UIDevice.current.orientation, self.videoDevice!.position){
-            case (UIDeviceOrientation.landscapeRight, AVCaptureDevicePosition.back):
+            case (UIDeviceOrientation.landscapeRight, AVCaptureDevice.Position.back):
                 self.ciOrientation = 3
-                self.transform = CGAffineTransform(rotationAngle: CGFloat(M_PI))
-            case (UIDeviceOrientation.landscapeLeft, AVCaptureDevicePosition.back):
+                self.transform = CGAffineTransform(rotationAngle: CGFloat(Double.pi))
+            case (UIDeviceOrientation.landscapeLeft, AVCaptureDevice.Position.back):
                 self.ciOrientation = 1
                 self.transform = CGAffineTransform.identity
-            case (UIDeviceOrientation.landscapeLeft, AVCaptureDevicePosition.front):
+            case (UIDeviceOrientation.landscapeLeft, AVCaptureDevice.Position.front):
                 self.ciOrientation = 3
-                self.transform = CGAffineTransform(rotationAngle: CGFloat(M_PI))
+                self.transform = CGAffineTransform(rotationAngle: CGFloat(Double.pi))
                 self.transform = self.transform.concatenating(CGAffineTransform(scaleX: -1.0, y: 1.0))
-            case (UIDeviceOrientation.landscapeRight, AVCaptureDevicePosition.front):
+            case (UIDeviceOrientation.landscapeRight, AVCaptureDevice.Position.front):
                 self.ciOrientation = 1
                 self.transform = CGAffineTransform.identity
                 self.transform = self.transform.concatenating(CGAffineTransform(scaleX: -1.0, y: 1.0))
-            case (UIDeviceOrientation.portraitUpsideDown, AVCaptureDevicePosition.back):
+            case (UIDeviceOrientation.portraitUpsideDown, AVCaptureDevice.Position.back):
                 self.ciOrientation = 7
-                self.transform = CGAffineTransform(rotationAngle: CGFloat(3*M_PI_2))
-            case (UIDeviceOrientation.portraitUpsideDown, AVCaptureDevicePosition.front):
+                self.transform = CGAffineTransform(rotationAngle: CGFloat(3*Double.pi/2))
+            case (UIDeviceOrientation.portraitUpsideDown, AVCaptureDevice.Position.front):
                 self.ciOrientation = 7
-                self.transform = CGAffineTransform(rotationAngle: CGFloat(3*M_PI_2))
+                self.transform = CGAffineTransform(rotationAngle: CGFloat(3*Double.pi/2))
                 self.transform = self.transform.concatenating(CGAffineTransform(scaleX: -1.0, y: 1.0))
-            case (UIDeviceOrientation.portrait, AVCaptureDevicePosition.back):
+            case (UIDeviceOrientation.portrait, AVCaptureDevice.Position.back):
                 self.ciOrientation = 5
-                self.transform = CGAffineTransform(rotationAngle: CGFloat(M_PI_2))
-            case (UIDeviceOrientation.portrait, AVCaptureDevicePosition.front):
+                self.transform = CGAffineTransform(rotationAngle: CGFloat(Double.pi/2))
+            case (UIDeviceOrientation.portrait, AVCaptureDevice.Position.front):
                 self.ciOrientation = 5
-                self.transform = CGAffineTransform(rotationAngle: CGFloat(-M_PI_2))
+                self.transform = CGAffineTransform(rotationAngle: CGFloat(-Double.pi/2))
                 self.transform = self.transform.concatenating(CGAffineTransform(scaleX: -1.0, y: -1.0))
             default:
                 self.ciOrientation = 5
-                self.transform = CGAffineTransform(rotationAngle: CGFloat(M_PI_2))
+                self.transform = CGAffineTransform(rotationAngle: CGFloat(Double.pi/2))
             }
             
             self.videoPreviewView.transform = self.transform
@@ -330,10 +338,12 @@ class VideoAnalgesic: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AV
         
         
         // see if we have any video device
-        let videoDevices = AVCaptureDeviceDiscoverySession(deviceTypes: [AVCaptureDeviceType.builtInWideAngleCamera],
-                                                           mediaType: AVMediaTypeVideo,
-                                                           position: self.devicePosition)
-        if (videoDevices!.devices.count > 0)
+        
+        let deviceDiscoverySession = AVCaptureDevice.DiscoverySession.init(deviceTypes: [AVCaptureDevice.DeviceType.builtInWideAngleCamera],
+                                                                           mediaType: AVMediaType.video,
+                                                                           position: AVCaptureDevice.Position.unspecified)
+        
+        if (deviceDiscoverySession.devices.count > 0)
         {
             self.start_internal()
             self._isRunning = true
@@ -354,10 +364,10 @@ class VideoAnalgesic: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AV
         self.captureSession!.stopRunning()
         
         NotificationCenter.default.removeObserver(self,
-            name: NSNotification.Name(rawValue: "UIApplicationDidChangeStatusBarOrientationNotification"), object: nil)
+                                                  name: NSNotification.Name(rawValue: "UIApplicationDidChangeStatusBarOrientationNotification"), object: nil)
         
-        self.captureSessionQueue.sync{
-                NSLog("waiting for capture session to end")
+        self.captureSessionQueue.sync(){
+            NSLog("waiting for capture session to end")
         }
         NSLog("Done!")
         
@@ -368,7 +378,7 @@ class VideoAnalgesic: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AV
     }
     
     // video buffer delegate
-    func captureOutput(_ captureOutput: AVCaptureOutput!, didOutputSampleBuffer sampleBuffer: CMSampleBuffer!, from connection: AVCaptureConnection!) {
+    func captureOutput(_ captureOutput: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         
         let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer)
         let sourceImage = CIImage(cvPixelBuffer: imageBuffer! as CVPixelBuffer, options:nil)
@@ -402,7 +412,7 @@ class VideoAnalgesic: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AV
         
         if (filteredImage != nil)
         {
-            DispatchQueue.main.async{
+            DispatchQueue.main.async(){
                 
                 self.videoPreviewView.bindDrawable()
                 
@@ -422,26 +432,26 @@ class VideoAnalgesic: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AV
                 if (filteredImage != nil){
                     self.ciContext.draw(filteredImage, in:self.videoPreviewViewBounds, from:drawRect)
                 }
-            
+                
                 self.videoPreviewView.display()
             }
         }
-
+        
     }
     
     func toggleFlash()->(Bool){
         var isOn = false
         if let device = self.videoDevice{
-            if (device.hasTorch && self.devicePosition == AVCaptureDevicePosition.back) {
+            if (device.hasTorch && self.devicePosition == AVCaptureDevice.Position.back) {
                 do {
                     try device.lockForConfiguration()
                 } catch _ {
                 }
-                if (device.torchMode == AVCaptureTorchMode.on) {
-                    device.torchMode = AVCaptureTorchMode.off
+                if (device.torchMode == AVCaptureDevice.TorchMode.on) {
+                    device.torchMode = AVCaptureDevice.TorchMode.off
                 } else {
                     do {
-                        try device.setTorchModeOnWithLevel(1.0)
+                        try device.setTorchModeOn(level: 1.0)
                         isOn = true
                     } catch _ {
                         isOn = false
@@ -461,35 +471,35 @@ class VideoAnalgesic: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AV
             }
             
             // set to 120FPS
-            let format = device.activeFormat!
+            let format = device.activeFormat
             let time:CMTime = CMTimeMake(1, Int32(desiredFrameRate))
             
-            for range in format.videoSupportedFrameRateRanges as! [AVFrameRateRange]{
+            for range in format.videoSupportedFrameRateRanges {
                 if range.minFrameRate <= (desiredFrameRate + 0.0001) && range.maxFrameRate >= (desiredFrameRate - 0.0001) {
                     device.activeVideoMaxFrameDuration = time
                     device.activeVideoMinFrameDuration = time
                     print("Changed FPS to \(desiredFrameRate)")
                     break
                 }
-
+                
             }
             device.unlockForConfiguration()
         }
         
-
+        
     }
-
-
+    
+    
     func turnOnFlashwithLevel(_ level:Float) -> (Bool){
         var isOverHeating = false
         if let device = self.videoDevice{
-            if (device.hasTorch && self.devicePosition == AVCaptureDevicePosition.back && level>0 && level<=1) {
+            if (device.hasTorch && self.devicePosition == AVCaptureDevice.Position.back && level>0 && level<=1) {
                 do {
                     try device.lockForConfiguration()
                 } catch _ {
                 }
                 do {
-                    try device.setTorchModeOnWithLevel(level)
+                    try device.setTorchModeOn(level: level)
                     isOverHeating = true
                 } catch _ {
                     isOverHeating = false
@@ -503,12 +513,12 @@ class VideoAnalgesic: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AV
     
     func turnOffFlash(){
         if let device = self.videoDevice{
-            if (device.hasTorch && device.torchMode == AVCaptureTorchMode.on) {
+            if (device.hasTorch && device.torchMode == AVCaptureDevice.TorchMode.on) {
                 do {
                     try device.lockForConfiguration()
                 } catch _ {
                 }
-                device.torchMode = AVCaptureTorchMode.off
+                device.torchMode = AVCaptureDevice.TorchMode.off
                 device.unlockForConfiguration()
             }
         }
@@ -516,3 +526,4 @@ class VideoAnalgesic: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AV
     
     
 }
+
